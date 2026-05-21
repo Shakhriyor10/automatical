@@ -31,6 +31,7 @@ ALLOWED_HOSTS = ["*"]
 # Application definition
 
 INSTALLED_APPS = [
+    'attendance',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -103,13 +104,11 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/3.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'ru'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Tashkent'
 
 USE_I18N = True
-
-USE_L10N = True
 
 USE_TZ = True
 
@@ -136,3 +135,7 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = MAX_UPLOAD_SIZE
 # https://docs.djangoproject.com/en/3.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+ATTENDANCE_NETWORK = os.environ.get('ATTENDANCE_NETWORK', '192.168.100.0/24')
+ATTENDANCE_GATEWAY_IP = os.environ.get('ATTENDANCE_GATEWAY_IP', '192.168.100.1')
+ATTENDANCE_ABSENCE_SECONDS = int(os.environ.get('ATTENDANCE_ABSENCE_SECONDS', '60'))

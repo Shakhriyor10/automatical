@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Учет сотрудников автосалона</title>
+    <style>
+        :root {
+            --bg: #eef2f6;
+            --panel: #fff;
+            --text: #111827;
+            --muted: #64748b;
+            --line: #d7e0ea;
+            --blue: #1d4ed8;
+            --blue-soft: #eaf1ff;
+            --green: #07835d;
+            --red: #b42318;
+            --ink: #243244;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            color: var(--text);
+            background: var(--bg);
+        }
+        header {
+            background: var(--panel);
+            border-bottom: 1px solid var(--line);
+            padding: 18px 24px;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+        }
+        main {
+            width: min(1420px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 18px 0 28px;
+        }
+        h1, h2, h3 { margin: 0; letter-spacing: 0; }
+        h1 { font-size: 24px; }
+        h2 { font-size: 20px; margin-bottom: 14px; }
+        h3 { font-size: 15px; margin-bottom: 8px; }
+        .muted { color: var(--muted); }
+        .toolbar, .actions, .date-nav {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .toolbar { justify-content: space-between; }
+        .actions, .date-nav { flex-wrap: wrap; }
+        .button, .date-link {
+            border-radius: 7px;
+            border: 1px solid var(--line);
+            cursor: pointer;
+            padding: 9px 12px;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .button { color: #fff; background: var(--blue); border-color: var(--blue); }
+        .date-link { color: var(--ink); background: #f7f9fc; }
+        input[type="date"] {
+            height: 38px;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            padding: 0 10px;
+            font: inherit;
+            background: #fff;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .stat, section {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        .stat { padding: 14px; }
+        .stat strong {
+            display: block;
+            font-size: 28px;
+            margin-bottom: 4px;
+        }
+        section {
+            padding: 18px;
+            margin-bottom: 16px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        th, td {
+            text-align: left;
+            padding: 11px 10px;
+            border-bottom: 1px solid var(--line);
+            vertical-align: top;
+        }
+        th { color: var(--muted); font-weight: 700; }
+        tr:last-child td { border-bottom: 0; }
+        .journal-table th:nth-child(1) { width: 24%; }
+        .journal-table th:nth-child(2),
+        .journal-table th:nth-child(3),
+        .journal-table th:nth-child(4),
+        .journal-table th:nth-child(5) { width: 12%; }
+        .journal-table th:nth-child(6) { width: 12%; }
+        .journal-table th:nth-child(7) { width: 16%; }
+        .badge {
+            display: inline-block;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .present { color: #fff; background: var(--green); }
+        .absent { color: #fff; background: var(--red); }
+        .event-in { color: var(--green); font-weight: 700; }
+        .event-out { color: var(--red); font-weight: 700; }
+        .late { color: var(--red); font-weight: 700; }
+        .on-time { color: var(--green); font-weight: 700; }
+        .employee-name { font-weight: 700; }
+        .nowrap { white-space: nowrap; }
+        .empty { color: var(--muted); padding: 12px 10px; }
+        details summary {
+            cursor: pointer;
+            list-style: none;
+            width: fit-content;
+        }
+        details summary::-webkit-details-marker { display: none; }
+        .arrow-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: #f7f9fc;
+            color: var(--blue);
+            font-weight: 700;
+            padding: 6px 10px;
+        }
+        .arrow-button::after { content: "v"; }
+        details[open] .arrow-button { background: var(--blue-soft); }
+        details[open] .arrow-button::after { content: "^"; }
+        .detail-panel {
+            margin-top: 10px;
+            display: grid;
+            grid-template-columns: 0.8fr 1.2fr 1.4fr;
+            gap: 12px;
+        }
+        .detail-box {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 12px;
+            background: #fbfcfe;
+        }
+        .intervals, .mini-events {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .interval {
+            display: inline-flex;
+            gap: 6px;
+            align-items: center;
+            border-radius: 6px;
+            background: #f6f8fb;
+            border: 1px solid var(--line);
+            padding: 5px 7px;
+            color: var(--ink);
+        }
+        .open { color: var(--green); background: #e8f7f0; border-color: #b7e2cc; }
+        .scan-status {
+            color: var(--muted);
+            font-size: 13px;
+            min-width: 280px;
+            text-align: right;
+        }
+        .section-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+        .updating { opacity: 0.65; transition: opacity .2s ease; }
+        @media (max-width: 1120px) {
+            .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .detail-panel { grid-template-columns: 1fr; }
+            .scan-status { text-align: left; }
+        }
+        @media (max-width: 760px) {
+            header { padding: 14px; }
+            main { width: min(100% - 20px, 1420px); padding-top: 12px; }
+            .toolbar { align-items: flex-start; flex-direction: column; }
+            .stats { grid-template-columns: 1fr 1fr; }
+            table { font-size: 13px; }
+            th, td { padding: 9px 6px; }
+        }
+    </style>
+</head>
+<body data-date="{{ selected_date_value }}">
+    <header>
+        <div class="toolbar">
+            <div>
+                <h1>Учет сотрудников автосалона</h1>
+                <div class="muted">Приход и уход по Wi-Fi за выбранную дату</div>
+            </div>
+            <div class="actions">
+                <span class="scan-status" id="scan-status">Обновление каждые 10 сек</span>
+                <form method="post" action="{% url 'attendance:scan_now' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="/?date={{ selected_date_value }}">
+                    <button class="button" type="submit">Сканировать сейчас</button>
+                </form>
+                <a class="button" href="/admin/">Админка</a>
+            </div>
+        </div>
+    </header>
+
+    <main id="dashboard">
+        {% if messages %}
+            <div class="messages">
+                {% for message in messages %}
+                    <div class="message">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <section>
+            <div class="toolbar">
+                <div>
+                    <h2>Дата: {{ selected_date|date:"d.m.Y" }}</h2>
+                    <div class="muted">{% if is_today %}Сегодня{% else %}Архивный день{% endif %}</div>
+                </div>
+                <div class="date-nav">
+                    <a class="date-link" href="/?date={{ previous_date }}">Назад</a>
+                    <form method="get" class="date-nav">
+                        <input type="date" name="date" value="{{ selected_date_value }}">
+                        <button class="date-link" type="submit">Показать</button>
+                    </form>
+                    <a class="date-link" href="/?date={{ next_date }}">Вперед</a>
+                    <a class="date-link" href="/">Сегодня</a>
+                </div>
+            </div>
+        </section>
+
+        <div class="stats">
+            <div class="stat"><strong id="stat-present">{{ present_count }}</strong><span class="muted">Сейчас на работе</span></div>
+            <div class="stat"><strong id="stat-absent">{{ absent_count }}</strong><span class="muted">Сейчас отсутствуют</span></div>
+            <div class="stat"><strong id="stat-in">{{ check_in_count }}</strong><span class="muted">Приходы за день</span></div>
+            <div class="stat"><strong id="stat-out">{{ check_out_count }}</strong><span class="muted">Уходы за день</span></div>
+            <div class="stat"><strong id="stat-devices">{{ device_count }}</strong><span class="muted">Устройства сотрудников</span></div>
+            <div class="stat"><strong id="stat-unknown">{{ unknown_count }}</strong><span class="muted">Неизвестные сейчас</span></div>
+        </div>
+
+        <section>
+            <h2>Журнал сотрудников</h2>
+            <table class="journal-table">
+                <thead>
+                    <tr>
+                        <th>Сотрудник</th>
+                        <th>Начало работы</th>
+                        <th>Первый приход</th>
+                        <th>Последний уход</th>
+                        <th>Опоздание</th>
+                        <th>Статус</th>
+                        <th>Детали</th>
+                    </tr>
+                </thead>
+                <tbody id="journal-body"></tbody>
+            </table>
+        </section>
+
+        <div class="section-grid">
+            <section>
+                <h2>Сейчас на работе</h2>
+                <table>
+                    <thead>
+                        <tr><th>Сотрудник</th><th>Пришел</th><th>Последний сигнал</th><th>IP</th></tr>
+                    </thead>
+                    <tbody id="present-body"></tbody>
+                </table>
+            </section>
+
+            <section>
+                <h2>Неизвестные устройства сейчас</h2>
+                <table>
+                    <thead>
+                        <tr><th>IP</th><th>MAC</th><th>Последний раз</th></tr>
+                    </thead>
+                    <tbody id="unknown-body"></tbody>
+                </table>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        const selectedDate = document.body.dataset.date;
+        const apiUrl = `/api/status/?date=${encodeURIComponent(selectedDate)}`;
+        const statusEl = document.getElementById('scan-status');
+        const dashboardEl = document.getElementById('dashboard');
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[char]));
+        }
+
+        function setText(id, value) {
+            document.getElementById(id).textContent = value;
+        }
+
+        function renderStats(stats) {
+            setText('stat-present', stats.present_count);
+            setText('stat-absent', stats.absent_count);
+            setText('stat-in', stats.check_in_count);
+            setText('stat-out', stats.check_out_count);
+            setText('stat-devices', stats.device_count);
+            setText('stat-unknown', stats.unknown_count);
+        }
+
+        function renderPresent(rows) {
+            const body = document.getElementById('present-body');
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="4" class="empty">Пока никого не видно в сети.</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map((row) => `
+                <tr>
+                    <td><span class="badge present">на работе</span><br>${escapeHtml(row.employee)}</td>
+                    <td class="nowrap">${escapeHtml(row.first_seen_at)}</td>
+                    <td class="nowrap">${escapeHtml(row.last_seen_at)}</td>
+                    <td>${escapeHtml(row.last_ip)}</td>
+                </tr>
+            `).join('');
+        }
+
+        function renderUnknown(rows) {
+            const body = document.getElementById('unknown-body');
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="3" class="empty">Неизвестных устройств сейчас нет.</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map((row) => `
+                <tr>
+                    <td>${escapeHtml(row.ip_address)}</td>
+                    <td>${escapeHtml(row.mac_address)}</td>
+                    <td class="nowrap">${escapeHtml(row.last_seen_at)}</td>
+                </tr>
+            `).join('');
+        }
+
+        function intervalHtml(intervals) {
+            if (!intervals.length) return '<span class="muted">Нет записей</span>';
+            return `<div class="intervals">${intervals.map((item) => `
+                <span class="interval ${item.open ? 'open' : ''}">${escapeHtml(item.check_in)} - ${escapeHtml(item.check_out)}</span>
+            `).join('')}</div>`;
+        }
+
+        function eventsHtml(events) {
+            if (!events.length) return '<span class="muted">Событий нет</span>';
+            return `<div class="mini-events">${events.map((event) => `
+                <span class="interval">
+                    ${escapeHtml(event.time)}
+                    <span class="${escapeHtml(event.type_class)}">${escapeHtml(event.type)}</span>
+                    <span class="muted">${escapeHtml(event.ip)}</span>
+                </span>
+            `).join('')}</div>`;
+        }
+
+        function renderJournal(rows) {
+            const body = document.getElementById('journal-body');
+            if (!rows.length) {
+                body.innerHTML = '<tr><td colspan="7" class="empty">Сотрудники еще не добавлены.</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map((row) => `
+                <tr>
+                    <td>
+                        <span class="employee-name">${escapeHtml(row.employee)}</span><br>
+                        <span class="muted">${escapeHtml(row.position)}</span>
+                    </td>
+                    <td class="nowrap">${escapeHtml(row.scheduled_start)}</td>
+                    <td class="nowrap">${escapeHtml(row.first_check_in)}</td>
+                    <td class="nowrap">${escapeHtml(row.last_check_out)}</td>
+                    <td class="nowrap"><span class="${row.is_late ? 'late' : 'on-time'}">${escapeHtml(row.lateness)}</span></td>
+                    <td>
+                        ${row.is_present_now
+                            ? `<span class="badge present">на работе</span>${row.last_ip ? `<br><span class="muted">${escapeHtml(row.last_ip)}</span>` : ''}`
+                            : '<span class="badge absent">нет</span>'}
+                    </td>
+                    <td>
+                        <details>
+                            <summary><span class="arrow-button">Открыть</span></summary>
+                            <div class="detail-panel">
+                                <div class="detail-box">
+                                    <h3>Итоги за день</h3>
+                                    <div>Приходов: <strong>${row.check_in_count}</strong></div>
+                                    <div>Уходов: <strong>${row.check_out_count}</strong></div>
+                                    <div>Начало работы: <strong>${escapeHtml(row.scheduled_start)}</strong></div>
+                                    <div>Опоздание: <strong class="${row.is_late ? 'late' : 'on-time'}">${escapeHtml(row.lateness)}</strong></div>
+                                    ${row.last_seen_at ? `<div class="muted">Последний сигнал: ${escapeHtml(row.last_seen_at)}</div>` : ''}
+                                </div>
+                                <div class="detail-box">
+                                    <h3>Интервалы</h3>
+                                    ${intervalHtml(row.intervals)}
+                                </div>
+                                <div class="detail-box">
+                                    <h3>Все события</h3>
+                                    ${eventsHtml(row.events)}
+                                </div>
+                            </div>
+                        </details>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function refreshDashboard() {
+            dashboardEl.classList.add('updating');
+            try {
+                const response = await fetch(apiUrl, { cache: 'no-store' });
+                if (!response.ok) throw new Error('status request failed');
+                const data = await response.json();
+                renderStats(data.stats);
+                renderJournal(data.daily_rows);
+                renderPresent(data.present);
+                renderUnknown(data.unknown_devices);
+                statusEl.textContent = `Обновлено: ${data.updated_at}`;
+            } catch (error) {
+                statusEl.textContent = 'Ошибка обновления, повтор через 10 сек';
+            } finally {
+                dashboardEl.classList.remove('updating');
+            }
+        }
+
+        refreshDashboard();
+        setInterval(refreshDashboard, 10000);
+    </script>
+</body>
+</html>

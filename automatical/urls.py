@@ -15,11 +15,12 @@ Including another URLconf
 """
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import path
+from django.urls import include, path
 
 from automatical import settings
 
 urlpatterns = [
+    path('', include('attendance.urls')),
     path('admin/', admin.site.urls),
 ]
 
