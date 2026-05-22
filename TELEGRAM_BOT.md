@@ -78,14 +78,15 @@ TELEGRAM_SCAN_INTERVAL_SECONDS=10
 
 ```text
 TELEGRAM_LATE_ALERT_CHAT_ID=5262110076
-TELEGRAM_LATE_ALERT_START_TIME=09:20
+TELEGRAM_LATE_ALERT_START_TIME=
 TELEGRAM_LATE_ALERT_REPEAT_MINUTES=30
 TELEGRAM_LATE_ALERT_CHECK_INTERVAL_SECONDS=30
 ```
 
 Если `TELEGRAM_LATE_ALERT_START_TIME` пустой, бот использует время из сотрудника:
 `Начало работы + Допустимое опоздание`.
-Например, начало `09:00` и допустимое опоздание `20` минут означает первое предупреждение в `09:20`.
+Например, начало `09:20` и допустимое опоздание `20` минут означает первое предупреждение в `09:40`.
+Следующее предупреждение будет через `TELEGRAM_LATE_ALERT_REPEAT_MINUTES`, например в `10:10`.
 
 Для теста можно поставить текущее время, например:
 
