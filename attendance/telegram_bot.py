@@ -360,13 +360,11 @@ def build_late_warning_text(employee, due_at):
 
 def build_arrived_alert_text(employee, first_in):
     mention = _employee_telegram_mention(employee)
-    lateness = _calculate_lateness(employee, first_in, timezone.localdate())
     return (
         '🟢 <b>Сотрудник пришел</b>\n\n'
         f'{mention}\n'
         'Статус: <b>Пришел</b>\n'
-        f'Пришел: <b>{_format_time(first_in.observed_at)}</b>\n'
-        f'Опоздание: <b>{lateness}</b>'
+        f'Пришел: <b>{_format_time(first_in.observed_at)}</b>'
     )
 
 
