@@ -210,7 +210,7 @@ def _build_intervals(events):
 
 
 def _calculate_lateness(employee, first_check_in, selected_date):
-    if not first_check_in or not employee.work_start_time:
+    if not first_check_in or not employee.work_start_time or employee.late_grace_minutes is None:
         return {
             'minutes': None,
             'display': '-',
@@ -219,7 +219,7 @@ def _calculate_lateness(employee, first_check_in, selected_date):
 
     scheduled_at = timezone.make_aware(datetime.combine(selected_date, employee.work_start_time))
     arrived_at = first_check_in.observed_at
-    grace_minutes = employee.late_grace_minutes or 0
+    grace_minutes = employee.late_grace_minutes
     late_seconds = (arrived_at - scheduled_at).total_seconds() - (grace_minutes * 60)
     late_minutes = max(int(late_seconds // 60), 0)
 

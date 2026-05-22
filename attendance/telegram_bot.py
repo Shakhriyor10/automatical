@@ -294,6 +294,8 @@ def build_late_alert_actions(chat_id, alert_start_time=None, repeat_minutes=30):
             continue
 
         due_at = _employee_late_due_at(employee, selected_date, alert_start_time)
+        if due_at is None:
+            continue
         if now < due_at:
             continue
 
@@ -369,10 +371,13 @@ def build_arrived_alert_text(employee, first_in):
 
 
 def _employee_late_due_at(employee, selected_date, alert_start_time=None):
+    if not employee.work_start_time or employee.late_grace_minutes is None:
+        return None
+
     work_start = alert_start_time or employee.work_start_time
     due_at = timezone.make_aware(datetime.combine(selected_date, work_start))
     if alert_start_time is None:
-        due_at += timedelta(minutes=employee.late_grace_minutes or 0)
+        due_at += timedelta(minutes=employee.late_grace_minutes)
     return due_at
 
 
@@ -529,11 +534,11 @@ def _arrival_icon(row):
 
 
 def _calculate_lateness(employee, first_check_in, selected_date):
-    if not first_check_in or not employee.work_start_time:
+    if not first_check_in or not employee.work_start_time or employee.late_grace_minutes is None:
         return '-'
 
     scheduled_at = timezone.make_aware(datetime.combine(selected_date, employee.work_start_time))
-    grace_minutes = employee.late_grace_minutes or 0
+    grace_minutes = employee.late_grace_minutes
     late_seconds = (first_check_in.observed_at - scheduled_at).total_seconds() - (grace_minutes * 60)
     late_minutes = max(int(late_seconds // 60), 0)
 

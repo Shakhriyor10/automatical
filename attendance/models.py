@@ -7,8 +7,8 @@ class Employee(models.Model):
     position = models.CharField('Должность', max_length=120, blank=True)
     phone = models.CharField('Телефон', max_length=50, blank=True)
     telegram_user = models.CharField('Telegram user', max_length=100, blank=True)
-    work_start_time = models.TimeField('Начало работы', default='09:00')
-    late_grace_minutes = models.PositiveIntegerField('Допустимое опоздание, мин', default=0)
+    work_start_time = models.TimeField('Начало работы', blank=True, null=True)
+    late_grace_minutes = models.PositiveIntegerField('Допустимое опоздание, мин', blank=True, null=True)
     is_active = models.BooleanField('Активен', default=True)
     created_at = models.DateTimeField('Создан', auto_now_add=True)
 
