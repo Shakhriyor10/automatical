@@ -106,6 +106,8 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 - Telegram bot с автосканом Wi-Fi
 - Watchdog, который каждую минуту проверяет, что сервер и bot живы
 
+Автозапуск использует `run_hidden.vbs`, чтобы PowerShell-окна не мигали на экране.
+
 Скрипт также откроет порт `8088` в Windows Firewall для частных/доменных сетей.
 Если запускаете без автозапуска, порт можно открыть отдельно:
 

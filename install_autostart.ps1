@@ -2,10 +2,16 @@ $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$WScript = Join-Path $env:SystemRoot "System32\wscript.exe"
+$HiddenRunner = Join-Path $ProjectDir "run_hidden.vbs"
 $WebScript = Join-Path $ProjectDir "start_web_hidden.ps1"
 $BotScript = Join-Path $ProjectDir "start_bot_hidden.ps1"
 $WatchdogScript = Join-Path $ProjectDir "ensure_automatical.ps1"
 $FirewallScript = Join-Path $ProjectDir "open_firewall_8088.ps1"
+
+if (-not (Test-Path $HiddenRunner)) {
+    throw "Missing file: $HiddenRunner"
+}
 
 if (-not (Test-Path $WebScript)) {
     throw "Missing file: $WebScript"
@@ -24,18 +30,18 @@ if (Test-Path $FirewallScript) {
 }
 
 $WebAction = New-ScheduledTaskAction `
-    -Execute $PowerShell `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$WebScript`"" `
+    -Execute $WScript `
+    -Argument "//B //Nologo `"$HiddenRunner`" `"$WebScript`"" `
     -WorkingDirectory $ProjectDir
 
 $BotAction = New-ScheduledTaskAction `
-    -Execute $PowerShell `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$BotScript`"" `
+    -Execute $WScript `
+    -Argument "//B //Nologo `"$HiddenRunner`" `"$BotScript`"" `
     -WorkingDirectory $ProjectDir
 
 $WatchdogAction = New-ScheduledTaskAction `
-    -Execute $PowerShell `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$WatchdogScript`"" `
+    -Execute $WScript `
+    -Argument "//B //Nologo `"$HiddenRunner`" `"$WatchdogScript`"" `
     -WorkingDirectory $ProjectDir
 
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
@@ -89,6 +95,7 @@ Register-ScheduledTask `
 
 Write-Host "Autostart installed."
 Write-Host "Used PowerShell: $PowerShell"
+Write-Host "Used hidden runner: $HiddenRunner"
 Write-Host "Tasks:"
 Write-Host "- Automatical Web Server"
 Write-Host "- Automatical Telegram Bot"
