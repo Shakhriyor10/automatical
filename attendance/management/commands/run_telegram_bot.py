@@ -12,10 +12,13 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from attendance.telegram_bot import (
+    build_daily_report_action,
     build_late_alert_actions,
     mark_late_notification_resolved,
     router,
     run_scan,
+    save_daily_report_content,
+    save_daily_report_message,
     save_late_notification_message,
 )
 
@@ -47,6 +50,11 @@ class Command(BaseCommand):
         late_alert_repeat_minutes = int(os.environ.get('TELEGRAM_LATE_ALERT_REPEAT_MINUTES', '30'))
         late_alert_check_interval = int(os.environ.get('TELEGRAM_LATE_ALERT_CHECK_INTERVAL_SECONDS', '30'))
         late_alert_check_interval = max(late_alert_check_interval, 5)
+        daily_report_chat_id = os.environ.get('TELEGRAM_DAILY_REPORT_CHAT_ID', '') or late_alert_chat_id
+        daily_report_time = parse_required_time(os.environ.get('TELEGRAM_DAILY_REPORT_TIME', '09:00'), 'TELEGRAM_DAILY_REPORT_TIME')
+        daily_report_until = parse_required_time(os.environ.get('TELEGRAM_DAILY_REPORT_SEND_UNTIL', '10:00'), 'TELEGRAM_DAILY_REPORT_SEND_UNTIL')
+        daily_report_check_interval = max(int(os.environ.get('TELEGRAM_DAILY_REPORT_CHECK_INTERVAL_SECONDS', '10')), 5)
+        daily_report_send_on_start = parse_bool(os.environ.get('TELEGRAM_DAILY_REPORT_SEND_ON_START', '0'))
 
         self.stdout.write(self.style.SUCCESS('Telegram bot started. Press Ctrl+C to stop.'))
         self.stdout.write(f'Background Wi-Fi scan interval: {scan_interval} seconds.')
@@ -57,6 +65,15 @@ class Command(BaseCommand):
             self.stdout.write(f'Late alert repeat: {late_alert_repeat_minutes} minutes.')
         else:
             self.stdout.write(self.style.WARNING('TELEGRAM_LATE_ALERT_CHAT_ID is empty. Group late alerts are disabled.'))
+        if daily_report_chat_id:
+            self.stdout.write(
+                f'Daily attendance report: {daily_report_time:%H:%M}-{daily_report_until:%H:%M} '
+                f'to chat {daily_report_chat_id}.'
+            )
+            if daily_report_send_on_start:
+                self.stdout.write('Daily attendance report test mode: send a new list on bot start.')
+        else:
+            self.stdout.write(self.style.WARNING('Daily attendance report is disabled because group chat id is empty.'))
         if allowed_user_ids:
             self.stdout.write(f'Allowed Telegram users: {", ".join(map(str, sorted(allowed_user_ids)))}')
         else:
@@ -70,14 +87,22 @@ class Command(BaseCommand):
             late_alert_start_time=late_alert_start_time,
             late_alert_repeat_minutes=late_alert_repeat_minutes,
             late_alert_check_interval=late_alert_check_interval,
+            daily_report_chat_id=daily_report_chat_id,
+            daily_report_time=daily_report_time,
+            daily_report_until=daily_report_until,
+            daily_report_check_interval=daily_report_check_interval,
+            daily_report_send_on_start=daily_report_send_on_start,
         ))
 
 
 async def run_bot_forever(**kwargs):
     reconnect_delay = 5
+    startup_state = {
+        'force_daily_report': kwargs.pop('daily_report_send_on_start', False),
+    }
     while True:
         try:
-            await run_bot_once(**kwargs)
+            await run_bot_once(startup_state=startup_state, **kwargs)
             reconnect_delay = 5
         except asyncio.CancelledError:
             raise
@@ -98,6 +123,11 @@ async def run_bot_once(
     late_alert_start_time,
     late_alert_repeat_minutes,
     late_alert_check_interval,
+    daily_report_chat_id,
+    daily_report_time,
+    daily_report_until,
+    daily_report_check_interval,
+    startup_state,
 ):
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher(allowed_user_ids=allowed_user_ids)
@@ -110,6 +140,15 @@ async def run_bot_once(
             alert_start_time=late_alert_start_time,
             repeat_minutes=late_alert_repeat_minutes,
             interval=late_alert_check_interval,
+        )))
+    if daily_report_chat_id:
+        tasks.append(asyncio.create_task(background_daily_report(
+            bot=bot,
+            chat_id=daily_report_chat_id,
+            send_time=daily_report_time,
+            send_until=daily_report_until,
+            interval=daily_report_check_interval,
+            startup_state=startup_state,
         )))
     try:
         await dispatcher.start_polling(bot)
@@ -165,6 +204,47 @@ async def background_late_alerts(bot, chat_id, alert_start_time, repeat_minutes,
         await asyncio.sleep(interval)
 
 
+async def background_daily_report(bot, chat_id, send_time, send_until, interval, startup_state):
+    while True:
+        try:
+            force_send = startup_state['force_daily_report']
+            action = await asyncio.to_thread(
+                build_daily_report_action,
+                chat_id,
+                send_time,
+                send_until,
+                force_send,
+            )
+            if action and action['type'] == 'send':
+                try:
+                    message = await bot.send_message(chat_id=chat_id, text=action['text'])
+                except Exception as exc:
+                    print(f'Daily report send failed: {exc}')
+                else:
+                    await asyncio.to_thread(
+                        save_daily_report_message,
+                        action['report_id'],
+                        message.message_id,
+                        action['text'],
+                    )
+                    if force_send:
+                        startup_state['force_daily_report'] = False
+            elif action and action['type'] == 'edit':
+                try:
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=action['message_id'],
+                        text=action['text'],
+                    )
+                except Exception as exc:
+                    print(f'Daily report edit failed: {exc}')
+                else:
+                    await asyncio.to_thread(save_daily_report_content, action['report_id'], action['text'])
+        except Exception as exc:
+            print(f'Daily report loop failed: {exc}')
+        await asyncio.sleep(interval)
+
+
 def load_env_file(path):
     if not path.exists():
         return
@@ -199,3 +279,14 @@ def parse_optional_time(value):
         return datetime.strptime(value, '%H:%M').time()
     except ValueError as exc:
         raise CommandError('TELEGRAM_LATE_ALERT_START_TIME must be in HH:MM format, for example 09:20.') from exc
+
+
+def parse_required_time(value, variable_name):
+    try:
+        return datetime.strptime(value.strip(), '%H:%M').time()
+    except ValueError as exc:
+        raise CommandError(f'{variable_name} must be in HH:MM format, for example 09:00.') from exc
+
+
+def parse_bool(value):
+    return (value or '').strip().lower() in {'1', 'true', 'yes', 'y', 'on'}

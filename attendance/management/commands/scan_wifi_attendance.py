@@ -3,6 +3,7 @@ import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
@@ -11,6 +12,10 @@ from django.utils import timezone
 
 from attendance.models import AttendanceEvent, Device, Presence, UnknownDevice, normalize_mac
 
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 MIN_GOOD_SCAN_DEVICES = 5
 
@@ -34,6 +39,33 @@ class Command(BaseCommand):
         parser.add_argument('--misses-before-checkout', type=int, default=1)
 
     def handle(self, *args, **options):
+        lock_file = None
+        if msvcrt:
+            lock_path = Path(settings.BASE_DIR) / '.attendance_scan.lock'
+            lock_file = lock_path.open('a+b')
+            lock_file.seek(0, 2)
+            if lock_file.tell() == 0:
+                lock_file.write(b'\0')
+                lock_file.flush()
+            lock_file.seek(0)
+            try:
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                lock_file.close()
+                self.stdout.write(self.style.WARNING('Scan is already running. Skipping this duplicate scan.'))
+                return
+
+        try:
+            self._run_scan(options)
+        finally:
+            if lock_file:
+                try:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                finally:
+                    lock_file.close()
+
+    def _run_scan(self, options):
         now = timezone.now()
         network = ipaddress.ip_network(options['network'], strict=False)
 

@@ -20,7 +20,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from .models import AttendanceEvent, Employee, LateNotification, Presence
+from .models import AttendanceEvent, DailyAttendanceReport, Employee, LateNotification, Presence
 
 
 router = Router()
@@ -344,6 +344,94 @@ def mark_late_notification_resolved(notification_id):
         resolved_at=now,
         updated_at=now,
     )
+
+
+def build_daily_report_action(chat_id, send_time, send_until, force_send=False):
+    selected_date = timezone.localdate()
+    local_now = timezone.localtime()
+    current_time = local_now.time().replace(tzinfo=None)
+    report = DailyAttendanceReport.objects.filter(
+        report_date=selected_date,
+        chat_id=str(chat_id),
+    ).first()
+
+    if not report and not force_send and not (send_time <= current_time <= send_until):
+        return None
+
+    text = build_daily_attendance_message(selected_date)
+    if not report:
+        report = DailyAttendanceReport.objects.create(
+            report_date=selected_date,
+            chat_id=str(chat_id),
+        )
+
+    if force_send:
+        return {'type': 'send', 'report_id': report.id, 'text': text}
+
+    if not report.message_id:
+        return {'type': 'send', 'report_id': report.id, 'text': text}
+
+    if report.content != text:
+        return {
+            'type': 'edit',
+            'report_id': report.id,
+            'message_id': report.message_id,
+            'text': text,
+        }
+
+    return None
+
+
+def save_daily_report_message(report_id, message_id, content):
+    now = timezone.now()
+    DailyAttendanceReport.objects.filter(id=report_id).update(
+        message_id=message_id,
+        content=content,
+        sent_at=now,
+        updated_at=now,
+    )
+
+
+def save_daily_report_content(report_id, content):
+    DailyAttendanceReport.objects.filter(id=report_id).update(
+        content=content,
+        updated_at=timezone.now(),
+    )
+
+
+def build_daily_attendance_message(selected_date):
+    start = timezone.make_aware(datetime.combine(selected_date, datetime.min.time()))
+    end = start + timedelta(days=1)
+    employees = list(Employee.objects.filter(is_active=True).order_by('full_name'))
+    first_arrivals = {}
+    for event in AttendanceEvent.objects.filter(
+        observed_at__gte=start,
+        observed_at__lt=end,
+        event_type=AttendanceEvent.CHECK_IN,
+    ).order_by('observed_at'):
+        first_arrivals.setdefault(event.employee_id, event)
+
+    lines = [
+        '☀️ <b>Доброе утро, коллеги!</b>',
+        'Буду ждать вас в офисе и аккуратно отмечу, кто во сколько пришел 😊',
+        '',
+        f'📋 <b>Список сотрудников за {selected_date:%d.%m.%Y}</b>',
+        '',
+    ]
+    if not employees:
+        lines.append('Активных сотрудников пока нет.')
+        return '\n'.join(lines)
+
+    for employee in employees:
+        arrival = first_arrivals.get(employee.id)
+        arrival_icon = '🟢' if arrival else '⚪'
+        lines.extend([
+            f'{arrival_icon} {_employee_telegram_mention(employee)}',
+            f'Начало работы: <b>{_format_time(employee.work_start_time)}</b>',
+            f'Пришел: <b>{_format_time(arrival.observed_at) if arrival else "-"}</b>',
+            '',
+        ])
+    return '\n'.join(lines).rstrip()
 
 
 def build_late_warning_text(employee, due_at):

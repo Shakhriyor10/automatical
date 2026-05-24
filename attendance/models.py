@@ -159,6 +159,24 @@ class LateNotification(models.Model):
         return f'{self.employee} - {self.alert_date} - {self.status}'
 
 
+class DailyAttendanceReport(models.Model):
+    report_date = models.DateField('Date')
+    chat_id = models.CharField('Telegram chat id', max_length=64)
+    message_id = models.PositiveIntegerField('Telegram message id', blank=True, null=True)
+    content = models.TextField('Last message content', blank=True)
+    sent_at = models.DateTimeField('Sent at', blank=True, null=True)
+    updated_at = models.DateTimeField('Updated', auto_now=True)
+
+    class Meta:
+        ordering = ['-report_date']
+        unique_together = ('report_date', 'chat_id')
+        verbose_name = 'Telegram daily attendance report'
+        verbose_name_plural = 'Telegram daily attendance reports'
+
+    def __str__(self):
+        return f'{self.report_date} - {self.chat_id}'
+
+
 def normalize_mac(value):
     cleaned = value.strip().lower().replace('-', ':')
     parts = cleaned.split(':')

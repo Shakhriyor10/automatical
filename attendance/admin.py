@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AttendanceEvent, Device, Employee, LateNotification, Presence, UnknownDevice
+from .models import AttendanceEvent, DailyAttendanceReport, Device, Employee, LateNotification, Presence, UnknownDevice
 
 
 class DeviceInline(admin.TabularInline):
@@ -49,3 +49,10 @@ class LateNotificationAdmin(admin.ModelAdmin):
     list_display = ('employee', 'alert_date', 'chat_id', 'message_id', 'alert_count', 'status', 'last_alert_at', 'resolved_at')
     list_filter = ('status', 'alert_date')
     search_fields = ('employee__full_name', 'chat_id', 'message_id')
+
+
+@admin.register(DailyAttendanceReport)
+class DailyAttendanceReportAdmin(admin.ModelAdmin):
+    list_display = ('report_date', 'chat_id', 'message_id', 'sent_at', 'updated_at')
+    list_filter = ('report_date',)
+    search_fields = ('chat_id', 'message_id')
