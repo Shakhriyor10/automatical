@@ -27,7 +27,7 @@ router = Router()
 
 DATE_FORMAT = '%Y-%m-%d'
 MAX_MESSAGE_LENGTH = 3900
-MAX_LATE_WARNINGS_PER_DAY = 2
+MAX_LATE_WARNINGS_PER_DAY = 1
 _scan_lock = Lock()
 
 
@@ -52,7 +52,7 @@ def main_keyboard():
         keyboard=[
             [KeyboardButton(text='Сегодня'), KeyboardButton(text='Сейчас на работе')],
             [KeyboardButton(text='Кого нет'), KeyboardButton(text='Сканировать')],
-            [KeyboardButton(text='Дата /date')],
+            [KeyboardButton(text='Дата /date'), KeyboardButton(text='Админ')],
         ],
         resize_keyboard=True,
         input_field_placeholder='Выберите действие',
@@ -80,6 +80,10 @@ def _is_allowed(user_id, allowed_user_ids):
     return not allowed_user_ids or user_id in allowed_user_ids
 
 
+def _is_admin(user_id, admin_user_ids):
+    return user_id in admin_user_ids
+
+
 async def _guard_message(message, allowed_user_ids):
     if _is_allowed(message.from_user.id, allowed_user_ids):
         return True
@@ -91,6 +95,24 @@ async def _guard_callback(callback, allowed_user_ids):
     if _is_allowed(callback.from_user.id, allowed_user_ids):
         return True
     await callback.answer('Нет доступа', show_alert=True)
+    return False
+
+
+async def _guard_admin_message(message, allowed_user_ids, admin_user_ids):
+    if not await _guard_message(message, allowed_user_ids):
+        return False
+    if _is_admin(message.from_user.id, admin_user_ids):
+        return True
+    await message.answer('Эта настройка доступна только админу бота.')
+    return False
+
+
+async def _guard_admin_callback(callback, allowed_user_ids, admin_user_ids):
+    if not await _guard_callback(callback, allowed_user_ids):
+        return False
+    if _is_admin(callback.from_user.id, admin_user_ids):
+        return True
+    await callback.answer('Только для админа бота', show_alert=True)
     return False
 
 
@@ -107,9 +129,58 @@ async def start(message: Message, allowed_user_ids: set[int]):
         '/present - кто сейчас на работе\n'
         '/absent - кого сейчас нет\n'
         '/date 2026-05-21 - отчет за дату\n'
-        '/scan - запустить сканирование Wi-Fi'
+        '/scan - запустить сканирование Wi-Fi\n'
+        '/admin - настройки графика сотрудников'
     )
     await message.answer(text, reply_markup=main_keyboard())
+
+
+@router.message(Command('admin'))
+@router.message(F.text.casefold() == 'админ')
+async def admin_panel(message: Message, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_message(message, allowed_user_ids, admin_user_ids):
+        return
+    text, keyboard = await sync_to_async(build_admin_home)()
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.message(Command('setstart'))
+async def admin_set_start(message: Message, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_message(message, allowed_user_ids, admin_user_ids):
+        return
+    parts = (message.text or '').split()
+    if len(parts) != 3:
+        await message.answer('Формат: <code>/setstart ID HH:MM</code>\nНапример: <code>/setstart 3 09:30</code>')
+        return
+    try:
+        employee_id = int(parts[1])
+        start_time = datetime.strptime(parts[2], '%H:%M').time()
+    except ValueError:
+        await message.answer('Нужно так: <code>/setstart ID HH:MM</code>')
+        return
+    text, keyboard = await sync_to_async(set_employee_start_time)(employee_id, start_time)
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.message(Command('setgrace'))
+async def admin_set_grace(message: Message, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_message(message, allowed_user_ids, admin_user_ids):
+        return
+    parts = (message.text or '').split()
+    if len(parts) != 3:
+        await message.answer('Формат: <code>/setgrace ID MIN</code>\nНапример: <code>/setgrace 3 20</code>')
+        return
+    try:
+        employee_id = int(parts[1])
+        grace_minutes = int(parts[2])
+    except ValueError:
+        await message.answer('Нужно так: <code>/setgrace ID MIN</code>')
+        return
+    if grace_minutes < 0:
+        await message.answer('Допустимое опоздание не может быть меньше 0 минут.')
+        return
+    text, keyboard = await sync_to_async(set_employee_grace_minutes)(employee_id, grace_minutes)
+    await message.answer(text, reply_markup=keyboard)
 
 
 @router.message(Command('today'))
@@ -222,6 +293,67 @@ async def scan_callback(callback: CallbackQuery, allowed_user_ids: set[int]):
     await callback.message.edit_text(text, reply_markup=report_keyboard(timezone.localdate()))
 
 
+@router.callback_query(F.data == 'admin:home')
+async def admin_home_callback(callback: CallbackQuery, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_callback(callback, allowed_user_ids, admin_user_ids):
+        return
+    text, keyboard = await sync_to_async(build_admin_home)()
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith('admin:emp:'))
+async def admin_employee_callback(callback: CallbackQuery, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_callback(callback, allowed_user_ids, admin_user_ids):
+        return
+    employee_id = _callback_employee_id(callback.data)
+    text, keyboard = await sync_to_async(build_admin_employee_card)(employee_id)
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith('admin:start:'))
+async def admin_start_hint_callback(callback: CallbackQuery, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_callback(callback, allowed_user_ids, admin_user_ids):
+        return
+    employee_id = _callback_employee_id(callback.data)
+    await callback.answer()
+    await callback.message.answer(
+        f'Напишите новое начало работы так:\n<code>/setstart {employee_id} 09:30</code>'
+    )
+
+
+@router.callback_query(F.data.startswith('admin:grace:'))
+async def admin_grace_hint_callback(callback: CallbackQuery, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_callback(callback, allowed_user_ids, admin_user_ids):
+        return
+    employee_id = _callback_employee_id(callback.data)
+    await callback.answer()
+    await callback.message.answer(
+        f'Напишите допустимое опоздание так:\n<code>/setgrace {employee_id} 20</code>'
+    )
+
+
+@router.callback_query(F.data.startswith('admin:clear:'))
+async def admin_clear_schedule_callback(callback: CallbackQuery, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_callback(callback, allowed_user_ids, admin_user_ids):
+        return
+    employee_id = _callback_employee_id(callback.data)
+    text, keyboard = await sync_to_async(clear_employee_schedule)(employee_id)
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer('График убран')
+
+
+@router.callback_query(F.data.startswith('admin:toggle:'))
+async def admin_toggle_late_alerts_callback(callback: CallbackQuery, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_callback(callback, allowed_user_ids, admin_user_ids):
+        return
+    employee_id = _callback_employee_id(callback.data)
+    text, keyboard = await sync_to_async(toggle_employee_late_alerts)(employee_id)
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer('Статус изменен')
+
+
 async def _answer_report(message, selected_date):
     text = await sync_to_async(build_day_report)(selected_date)
     await _send_long(message, text, reply_markup=report_keyboard(selected_date))
@@ -246,6 +378,110 @@ async def _send_long(message, text, reply_markup=None):
         )
 
 
+def build_admin_home():
+    employees = list(Employee.objects.filter(is_active=True).order_by('full_name'))
+    lines = [
+        '<b>Настройки сотрудников</b>',
+        '',
+        'Выберите сотрудника, чтобы изменить начало работы, допустимое опоздание или предупреждения.',
+    ]
+    if not employees:
+        lines.append('Активных сотрудников пока нет.')
+        return '\n'.join(lines), None
+
+    buttons = [
+        [InlineKeyboardButton(text=f'{employee.id}. {employee.full_name}', callback_data=f'admin:emp:{employee.id}')]
+        for employee in employees
+    ]
+    return '\n'.join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_admin_employee_card(employee_id):
+    employee = Employee.objects.filter(id=employee_id).first()
+    if not employee:
+        return 'Сотрудник не найден.', _admin_back_keyboard()
+
+    text = _admin_employee_text(employee)
+    return text, _admin_employee_keyboard(employee)
+
+
+def set_employee_start_time(employee_id, start_time):
+    employee = Employee.objects.filter(id=employee_id).first()
+    if not employee:
+        return 'Сотрудник не найден.', _admin_back_keyboard()
+    employee.work_start_time = start_time
+    employee.save(update_fields=['work_start_time'])
+    return _admin_employee_text(employee), _admin_employee_keyboard(employee)
+
+
+def set_employee_grace_minutes(employee_id, grace_minutes):
+    employee = Employee.objects.filter(id=employee_id).first()
+    if not employee:
+        return 'Сотрудник не найден.', _admin_back_keyboard()
+    employee.late_grace_minutes = grace_minutes
+    employee.save(update_fields=['late_grace_minutes'])
+    return _admin_employee_text(employee), _admin_employee_keyboard(employee)
+
+
+def clear_employee_schedule(employee_id):
+    employee = Employee.objects.filter(id=employee_id).first()
+    if not employee:
+        return 'Сотрудник не найден.', _admin_back_keyboard()
+    employee.work_start_time = None
+    employee.late_grace_minutes = None
+    employee.save(update_fields=['work_start_time', 'late_grace_minutes'])
+    return _admin_employee_text(employee), _admin_employee_keyboard(employee)
+
+
+def toggle_employee_late_alerts(employee_id):
+    employee = Employee.objects.filter(id=employee_id).first()
+    if not employee:
+        return 'Сотрудник не найден.', _admin_back_keyboard()
+    employee.late_alerts_enabled = not employee.late_alerts_enabled
+    employee.save(update_fields=['late_alerts_enabled'])
+    return _admin_employee_text(employee), _admin_employee_keyboard(employee)
+
+
+def _admin_employee_text(employee):
+    start = _format_time(employee.work_start_time)
+    grace = '-' if employee.late_grace_minutes is None else f'{employee.late_grace_minutes} мин'
+    alerts = 'включены' if employee.late_alerts_enabled else 'выключены'
+    return (
+        f'<b>{html.escape(employee.full_name)}</b>\n\n'
+        f'ID: <code>{employee.id}</code>\n'
+        f'Начало работы: <b>{start}</b>\n'
+        f'Допустимое опоздание: <b>{grace}</b>\n'
+        f'Предупреждения об опоздании: <b>{alerts}</b>\n\n'
+        'Чтобы предупреждения работали, нужно указать начало работы и допустимое опоздание.'
+    )
+
+
+def _admin_employee_keyboard(employee):
+    status_text = 'Выключить предупреждения' if employee.late_alerts_enabled else 'Включить предупреждения'
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Изменить начало работы', callback_data=f'admin:start:{employee.id}')],
+            [InlineKeyboardButton(text='Изменить допустимое опоздание', callback_data=f'admin:grace:{employee.id}')],
+            [InlineKeyboardButton(text='Убрать рабочий график', callback_data=f'admin:clear:{employee.id}')],
+            [InlineKeyboardButton(text=status_text, callback_data=f'admin:toggle:{employee.id}')],
+            [InlineKeyboardButton(text='Назад к списку', callback_data='admin:home')],
+        ]
+    )
+
+
+def _admin_back_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text='Назад к списку', callback_data='admin:home')]]
+    )
+
+
+def _callback_employee_id(data):
+    try:
+        return int(data.rsplit(':', 1)[1])
+    except (TypeError, ValueError):
+        return 0
+
+
 def run_scan():
     if not _scan_lock.acquire(blocking=False):
         return False
@@ -261,12 +497,11 @@ def run_scan():
         _scan_lock.release()
 
 
-def build_late_alert_actions(chat_id, alert_start_time=None, repeat_minutes=30):
+def build_late_alert_actions(chat_id, alert_start_time=None):
     selected_date = timezone.localdate()
     now = timezone.now()
     start = timezone.make_aware(datetime.combine(selected_date, datetime.min.time()))
     end = start + timedelta(days=1)
-    repeat_after = timedelta(minutes=repeat_minutes)
     actions = []
 
     employees = list(Employee.objects.filter(is_active=True).order_by('full_name'))
@@ -284,13 +519,33 @@ def build_late_alert_actions(chat_id, alert_start_time=None, repeat_minutes=30):
         ).first()
 
         if first_in:
-            if notification and notification.status == LateNotification.STATUS_ACTIVE and notification.message_id:
-                actions.append({
-                    'type': 'edit_resolved',
-                    'notification_id': notification.id,
-                    'message_id': notification.message_id,
-                    'text': build_arrived_alert_text(employee, first_in),
-                })
+            if notification and notification.status == LateNotification.STATUS_ACTIVE:
+                if notification.message_id:
+                    actions.append({
+                        'type': 'delete_warning',
+                        'notification_id': notification.id,
+                        'message_id': notification.message_id,
+                    })
+                else:
+                    actions.append({
+                        'type': 'resolve_undelivered',
+                        'notification_id': notification.id,
+                    })
+            continue
+
+        if not employee.late_alerts_enabled:
+            if notification and notification.status == LateNotification.STATUS_ACTIVE:
+                if notification.message_id:
+                    actions.append({
+                        'type': 'delete_warning',
+                        'notification_id': notification.id,
+                        'message_id': notification.message_id,
+                    })
+                else:
+                    actions.append({
+                        'type': 'resolve_undelivered',
+                        'notification_id': notification.id,
+                    })
             continue
 
         due_at = _employee_late_due_at(employee, selected_date, alert_start_time)
@@ -303,9 +558,6 @@ def build_late_alert_actions(chat_id, alert_start_time=None, repeat_minutes=30):
             continue
 
         if notification and notification.alert_count >= MAX_LATE_WARNINGS_PER_DAY:
-            continue
-
-        if notification and notification.last_alert_at and now - notification.last_alert_at < repeat_after:
             continue
 
         if not notification:
@@ -346,7 +598,7 @@ def mark_late_notification_resolved(notification_id):
     )
 
 
-def build_daily_report_action(chat_id, send_time, send_until, force_send=False):
+def build_daily_report_action(chat_id, send_time):
     selected_date = timezone.localdate()
     local_now = timezone.localtime()
     current_time = local_now.time().replace(tzinfo=None)
@@ -355,7 +607,7 @@ def build_daily_report_action(chat_id, send_time, send_until, force_send=False):
         chat_id=str(chat_id),
     ).first()
 
-    if not report and not force_send and not (send_time <= current_time <= send_until):
+    if not report and current_time < send_time:
         return None
 
     text = build_daily_attendance_message(selected_date)
@@ -364,9 +616,6 @@ def build_daily_report_action(chat_id, send_time, send_until, force_send=False):
             report_date=selected_date,
             chat_id=str(chat_id),
         )
-
-    if force_send:
-        return {'type': 'send', 'report_id': report.id, 'text': text}
 
     if not report.message_id:
         return {'type': 'send', 'report_id': report.id, 'text': text}

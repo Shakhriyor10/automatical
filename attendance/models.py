@@ -9,6 +9,7 @@ class Employee(models.Model):
     telegram_user = models.CharField('Telegram user', max_length=100, blank=True)
     work_start_time = models.TimeField('Начало работы', blank=True, null=True)
     late_grace_minutes = models.PositiveIntegerField('Допустимое опоздание, мин', blank=True, null=True)
+    late_alerts_enabled = models.BooleanField('Предупреждать об опоздании', default=True)
     is_active = models.BooleanField('Активен', default=True)
     created_at = models.DateTimeField('Создан', auto_now_add=True)
 

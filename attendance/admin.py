@@ -10,8 +10,8 @@ class DeviceInline(admin.TabularInline):
 
 @admin.register(Employee)
 class EmployeeAdmin(admin.ModelAdmin):
-    list_display = ('full_name', 'position', 'phone', 'telegram_user', 'work_start_time', 'late_grace_minutes', 'is_active')
-    list_filter = ('is_active',)
+    list_display = ('full_name', 'position', 'phone', 'telegram_user', 'work_start_time', 'late_grace_minutes', 'late_alerts_enabled', 'is_active')
+    list_filter = ('late_alerts_enabled', 'is_active')
     search_fields = ('full_name', 'position', 'phone', 'telegram_user', 'devices__mac_address')
     inlines = (DeviceInline,)
 

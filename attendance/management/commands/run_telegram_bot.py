@@ -10,6 +10,7 @@ from django.core.management.base import BaseCommand, CommandError
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 
 from attendance.telegram_bot import (
     build_daily_report_action,
@@ -41,20 +42,18 @@ class Command(BaseCommand):
             raise CommandError('Replace TELEGRAM_BOT_TOKEN in .env with the real token from @BotFather.')
 
         allowed_user_ids = parse_allowed_user_ids(os.environ.get('TELEGRAM_ALLOWED_USER_IDS', ''))
+        admin_user_ids = parse_allowed_user_ids(os.environ.get('TELEGRAM_ADMIN_USER_IDS', ''))
         scan_interval = options['scan_interval'] or int(os.environ.get('TELEGRAM_SCAN_INTERVAL_SECONDS', '10'))
         scan_interval = max(scan_interval, 5)
         late_alert_chat_id = options['late_alert_chat_id'] or os.environ.get('TELEGRAM_LATE_ALERT_CHAT_ID', '')
         late_alert_start_time = parse_optional_time(
             options['late_alert_start_time'] or os.environ.get('TELEGRAM_LATE_ALERT_START_TIME', '')
         )
-        late_alert_repeat_minutes = int(os.environ.get('TELEGRAM_LATE_ALERT_REPEAT_MINUTES', '30'))
         late_alert_check_interval = int(os.environ.get('TELEGRAM_LATE_ALERT_CHECK_INTERVAL_SECONDS', '30'))
         late_alert_check_interval = max(late_alert_check_interval, 5)
         daily_report_chat_id = os.environ.get('TELEGRAM_DAILY_REPORT_CHAT_ID', '') or late_alert_chat_id
         daily_report_time = parse_required_time(os.environ.get('TELEGRAM_DAILY_REPORT_TIME', '09:00'), 'TELEGRAM_DAILY_REPORT_TIME')
-        daily_report_until = parse_required_time(os.environ.get('TELEGRAM_DAILY_REPORT_SEND_UNTIL', '10:00'), 'TELEGRAM_DAILY_REPORT_SEND_UNTIL')
         daily_report_check_interval = max(int(os.environ.get('TELEGRAM_DAILY_REPORT_CHECK_INTERVAL_SECONDS', '10')), 5)
-        daily_report_send_on_start = parse_bool(os.environ.get('TELEGRAM_DAILY_REPORT_SEND_ON_START', '0'))
 
         self.stdout.write(self.style.SUCCESS('Telegram bot started. Press Ctrl+C to stop.'))
         self.stdout.write(f'Background Wi-Fi scan interval: {scan_interval} seconds.')
@@ -62,47 +61,44 @@ class Command(BaseCommand):
             self.stdout.write(f'Late alerts chat id: {late_alert_chat_id}.')
             if late_alert_start_time:
                 self.stdout.write(f'Late alert test start time: {late_alert_start_time:%H:%M}.')
-            self.stdout.write(f'Late alert repeat: {late_alert_repeat_minutes} minutes.')
+            self.stdout.write('Late alerts: one warning per employee per day.')
         else:
             self.stdout.write(self.style.WARNING('TELEGRAM_LATE_ALERT_CHAT_ID is empty. Group late alerts are disabled.'))
         if daily_report_chat_id:
             self.stdout.write(
-                f'Daily attendance report: {daily_report_time:%H:%M}-{daily_report_until:%H:%M} '
+                f'Daily attendance report: after {daily_report_time:%H:%M} '
                 f'to chat {daily_report_chat_id}.'
             )
-            if daily_report_send_on_start:
-                self.stdout.write('Daily attendance report test mode: send a new list on bot start.')
         else:
             self.stdout.write(self.style.WARNING('Daily attendance report is disabled because group chat id is empty.'))
         if allowed_user_ids:
             self.stdout.write(f'Allowed Telegram users: {", ".join(map(str, sorted(allowed_user_ids)))}')
         else:
             self.stdout.write(self.style.WARNING('TELEGRAM_ALLOWED_USER_IDS is empty. Bot is available to anyone who knows it.'))
+        if admin_user_ids:
+            self.stdout.write(f'Telegram bot admins: {", ".join(map(str, sorted(admin_user_ids)))}')
+        else:
+            self.stdout.write(self.style.WARNING('TELEGRAM_ADMIN_USER_IDS is empty. Bot admin settings are disabled.'))
 
         asyncio.run(run_bot_forever(
             token=token,
             allowed_user_ids=allowed_user_ids,
+            admin_user_ids=admin_user_ids,
             scan_interval=scan_interval,
             late_alert_chat_id=late_alert_chat_id,
             late_alert_start_time=late_alert_start_time,
-            late_alert_repeat_minutes=late_alert_repeat_minutes,
             late_alert_check_interval=late_alert_check_interval,
             daily_report_chat_id=daily_report_chat_id,
             daily_report_time=daily_report_time,
-            daily_report_until=daily_report_until,
             daily_report_check_interval=daily_report_check_interval,
-            daily_report_send_on_start=daily_report_send_on_start,
         ))
 
 
 async def run_bot_forever(**kwargs):
     reconnect_delay = 5
-    startup_state = {
-        'force_daily_report': kwargs.pop('daily_report_send_on_start', False),
-    }
     while True:
         try:
-            await run_bot_once(startup_state=startup_state, **kwargs)
+            await run_bot_once(**kwargs)
             reconnect_delay = 5
         except asyncio.CancelledError:
             raise
@@ -118,19 +114,17 @@ async def run_bot_forever(**kwargs):
 async def run_bot_once(
     token,
     allowed_user_ids,
+    admin_user_ids,
     scan_interval,
     late_alert_chat_id,
     late_alert_start_time,
-    late_alert_repeat_minutes,
     late_alert_check_interval,
     daily_report_chat_id,
     daily_report_time,
-    daily_report_until,
     daily_report_check_interval,
-    startup_state,
 ):
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dispatcher = Dispatcher(allowed_user_ids=allowed_user_ids)
+    dispatcher = Dispatcher(allowed_user_ids=allowed_user_ids, admin_user_ids=admin_user_ids)
     dispatcher.include_router(router)
     tasks = [asyncio.create_task(background_scanner(scan_interval))]
     if late_alert_chat_id:
@@ -138,7 +132,6 @@ async def run_bot_once(
             bot=bot,
             chat_id=late_alert_chat_id,
             alert_start_time=late_alert_start_time,
-            repeat_minutes=late_alert_repeat_minutes,
             interval=late_alert_check_interval,
         )))
     if daily_report_chat_id:
@@ -146,9 +139,7 @@ async def run_bot_once(
             bot=bot,
             chat_id=daily_report_chat_id,
             send_time=daily_report_time,
-            send_until=daily_report_until,
             interval=daily_report_check_interval,
-            startup_state=startup_state,
         )))
     try:
         await dispatcher.start_polling(bot)
@@ -170,10 +161,10 @@ async def background_scanner(interval):
         await asyncio.sleep(interval)
 
 
-async def background_late_alerts(bot, chat_id, alert_start_time, repeat_minutes, interval):
+async def background_late_alerts(bot, chat_id, alert_start_time, interval):
     while True:
         try:
-            actions = await asyncio.to_thread(build_late_alert_actions, chat_id, alert_start_time, repeat_minutes)
+            actions = await asyncio.to_thread(build_late_alert_actions, chat_id, alert_start_time)
             for action in actions:
                 if action['type'] == 'send_warning':
                     try:
@@ -182,38 +173,37 @@ async def background_late_alerts(bot, chat_id, alert_start_time, repeat_minutes,
                         print(f'Late alert send failed: {exc}')
                         continue
                     await asyncio.to_thread(save_late_notification_message, action['notification_id'], message.message_id)
-                elif action['type'] == 'edit_resolved':
+                elif action['type'] == 'delete_warning':
                     delivered = False
                     try:
-                        await bot.edit_message_text(
+                        await bot.delete_message(
                             chat_id=chat_id,
                             message_id=action['message_id'],
-                            text=action['text'],
                         )
                         delivered = True
-                    except Exception:
-                        try:
-                            await bot.send_message(chat_id=chat_id, text=action['text'])
+                    except TelegramBadRequest as exc:
+                        if 'message to delete not found' in str(exc).lower():
                             delivered = True
-                        except Exception as exc:
-                            print(f'Late alert resolve failed: {exc}')
+                        else:
+                            print(f'Late alert delete failed: {exc}')
+                    except Exception as exc:
+                        print(f'Late alert delete failed: {exc}')
                     if delivered:
                         await asyncio.to_thread(mark_late_notification_resolved, action['notification_id'])
+                elif action['type'] == 'resolve_undelivered':
+                    await asyncio.to_thread(mark_late_notification_resolved, action['notification_id'])
         except Exception as exc:
             print(f'Late alert loop failed: {exc}')
         await asyncio.sleep(interval)
 
 
-async def background_daily_report(bot, chat_id, send_time, send_until, interval, startup_state):
+async def background_daily_report(bot, chat_id, send_time, interval):
     while True:
         try:
-            force_send = startup_state['force_daily_report']
             action = await asyncio.to_thread(
                 build_daily_report_action,
                 chat_id,
                 send_time,
-                send_until,
-                force_send,
             )
             if action and action['type'] == 'send':
                 try:
@@ -227,8 +217,6 @@ async def background_daily_report(bot, chat_id, send_time, send_until, interval,
                         message.message_id,
                         action['text'],
                     )
-                    if force_send:
-                        startup_state['force_daily_report'] = False
             elif action and action['type'] == 'edit':
                 try:
                     await bot.edit_message_text(
@@ -286,7 +274,3 @@ def parse_required_time(value, variable_name):
         return datetime.strptime(value.strip(), '%H:%M').time()
     except ValueError as exc:
         raise CommandError(f'{variable_name} must be in HH:MM format, for example 09:00.') from exc
-
-
-def parse_bool(value):
-    return (value or '').strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
