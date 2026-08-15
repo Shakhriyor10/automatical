@@ -63,6 +63,9 @@ TELEGRAM_SCAN_INTERVAL_SECONDS=10
 - `/date 2026-05-21` - отчет за выбранную дату
 - `/scan` - вручную запустить Wi-Fi сканирование
 - `/admin` - настройки графика сотрудников, только для `TELEGRAM_ADMIN_USER_IDS`
+- `/dayoff ID YYYY-MM-DD` - добавить сотруднику один выходной
+- `/dayoff ID YYYY-MM-DD YYYY-MM-DD` - добавить диапазон выходных
+- `/removedayoff ID YYYY-MM-DD` - удалить выходной, в который входит указанная дата
 - `/setstart ID HH:MM` - изменить начало работы сотрудника
 - `/setgrace ID MIN` - изменить допустимое опоздание сотрудника
 

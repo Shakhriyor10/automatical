@@ -20,7 +20,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from .models import AttendanceEvent, DailyAttendanceReport, Employee, LateNotification, Presence
+from .models import AttendanceEvent, DailyAttendanceReport, Employee, EmployeeDayOff, LateNotification, Presence
 
 
 router = Router()
@@ -45,6 +45,7 @@ class EmployeeDayRow:
     is_present: bool
     check_in_count: int
     check_out_count: int
+    is_day_off: bool
 
 
 def main_keyboard():
@@ -130,7 +131,7 @@ async def start(message: Message, allowed_user_ids: set[int]):
         '/absent - кого сейчас нет\n'
         '/date 2026-05-21 - отчет за дату\n'
         '/scan - запустить сканирование Wi-Fi\n'
-        '/admin - настройки графика сотрудников'
+        '/admin - график и выходные сотрудников'
     )
     await message.answer(text, reply_markup=main_keyboard())
 
@@ -180,6 +181,46 @@ async def admin_set_grace(message: Message, allowed_user_ids: set[int], admin_us
         await message.answer('Допустимое опоздание не может быть меньше 0 минут.')
         return
     text, keyboard = await sync_to_async(set_employee_grace_minutes)(employee_id, grace_minutes)
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.message(Command('dayoff'))
+async def admin_add_day_off(message: Message, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_message(message, allowed_user_ids, admin_user_ids):
+        return
+    parts = (message.text or '').split()
+    if len(parts) not in (3, 4):
+        await message.answer(
+            'Один день: <code>/dayoff ID YYYY-MM-DD</code>\n'
+            'Несколько дней: <code>/dayoff ID YYYY-MM-DD YYYY-MM-DD</code>'
+        )
+        return
+    try:
+        employee_id = int(parts[1])
+        start_date = datetime.strptime(parts[2], DATE_FORMAT).date()
+        end_date = datetime.strptime(parts[3], DATE_FORMAT).date() if len(parts) == 4 else start_date
+    except ValueError:
+        await message.answer('ID должен быть числом, даты — в формате <code>YYYY-MM-DD</code>.')
+        return
+    text, keyboard = await sync_to_async(add_employee_day_off)(employee_id, start_date, end_date)
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.message(Command('removedayoff'))
+async def admin_remove_day_off(message: Message, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_message(message, allowed_user_ids, admin_user_ids):
+        return
+    parts = (message.text or '').split()
+    if len(parts) != 3:
+        await message.answer('Формат: <code>/removedayoff ID YYYY-MM-DD</code>')
+        return
+    try:
+        employee_id = int(parts[1])
+        selected_date = datetime.strptime(parts[2], DATE_FORMAT).date()
+    except ValueError:
+        await message.answer('ID должен быть числом, дата — в формате <code>YYYY-MM-DD</code>.')
+        return
+    text, keyboard = await sync_to_async(remove_employee_day_off)(employee_id, selected_date)
     await message.answer(text, reply_markup=keyboard)
 
 
@@ -344,6 +385,23 @@ async def admin_clear_schedule_callback(callback: CallbackQuery, allowed_user_id
     await callback.answer('График убран')
 
 
+@router.callback_query(F.data.startswith('admin:dayoff:'))
+async def admin_day_off_hint_callback(callback: CallbackQuery, allowed_user_ids: set[int], admin_user_ids: set[int]):
+    if not await _guard_admin_callback(callback, allowed_user_ids, admin_user_ids):
+        return
+    employee_id = _callback_employee_id(callback.data)
+    await callback.answer()
+    await callback.message.answer(
+        'Добавить один выходной:\n'
+        f'<code>/dayoff {employee_id} {timezone.localdate():%Y-%m-%d}</code>\n\n'
+        'Добавить несколько дней:\n'
+        f'<code>/dayoff {employee_id} {timezone.localdate():%Y-%m-%d} '
+        f'{timezone.localdate() + timedelta(days=2):%Y-%m-%d}</code>\n\n'
+        'Удалить выходной по дате:\n'
+        f'<code>/removedayoff {employee_id} {timezone.localdate():%Y-%m-%d}</code>'
+    )
+
+
 @router.callback_query(F.data.startswith('admin:toggle:'))
 async def admin_toggle_late_alerts_callback(callback: CallbackQuery, allowed_user_ids: set[int], admin_user_ids: set[int]):
     if not await _guard_admin_callback(callback, allowed_user_ids, admin_user_ids):
@@ -383,7 +441,7 @@ def build_admin_home():
     lines = [
         '<b>Настройки сотрудников</b>',
         '',
-        'Выберите сотрудника, чтобы изменить начало работы, допустимое опоздание или предупреждения.',
+        'Выберите сотрудника, чтобы изменить график, предупреждения или выходные.',
     ]
     if not employees:
         lines.append('Активных сотрудников пока нет.')
@@ -442,16 +500,46 @@ def toggle_employee_late_alerts(employee_id):
     return _admin_employee_text(employee), _admin_employee_keyboard(employee)
 
 
+def add_employee_day_off(employee_id, start_date, end_date):
+    employee = Employee.objects.filter(id=employee_id).first()
+    if not employee:
+        return 'Сотрудник не найден.', _admin_back_keyboard()
+    if end_date < start_date:
+        return 'Последняя дата не может быть раньше первой.', _admin_employee_keyboard(employee)
+    EmployeeDayOff.objects.get_or_create(
+        employee=employee,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    return _admin_employee_text(employee), _admin_employee_keyboard(employee)
+
+
+def remove_employee_day_off(employee_id, selected_date):
+    employee = Employee.objects.filter(id=employee_id).first()
+    if not employee:
+        return 'Сотрудник не найден.', _admin_back_keyboard()
+    deleted, _ = EmployeeDayOff.objects.filter(
+        employee=employee,
+        start_date__lte=selected_date,
+        end_date__gte=selected_date,
+    ).delete()
+    prefix = '' if deleted else 'На эту дату выходной не найден.\n\n'
+    return prefix + _admin_employee_text(employee), _admin_employee_keyboard(employee)
+
+
 def _admin_employee_text(employee):
     start = _format_time(employee.work_start_time)
     grace = '-' if employee.late_grace_minutes is None else f'{employee.late_grace_minutes} мин'
     alerts = 'включены' if employee.late_alerts_enabled else 'выключены'
+    days_off = list(employee.days_off.filter(end_date__gte=timezone.localdate()).order_by('start_date')[:5])
+    days_off_text = ', '.join(_format_day_off_period(item) for item in days_off) or '-'
     return (
         f'<b>{html.escape(employee.full_name)}</b>\n\n'
         f'ID: <code>{employee.id}</code>\n'
         f'Начало работы: <b>{start}</b>\n'
         f'Допустимое опоздание: <b>{grace}</b>\n'
         f'Предупреждения об опоздании: <b>{alerts}</b>\n\n'
+        f'Ближайшие выходные: <b>{days_off_text}</b>\n\n'
         'Чтобы предупреждения работали, нужно указать начало работы и допустимое опоздание.'
     )
 
@@ -464,6 +552,7 @@ def _admin_employee_keyboard(employee):
             [InlineKeyboardButton(text='Изменить допустимое опоздание', callback_data=f'admin:grace:{employee.id}')],
             [InlineKeyboardButton(text='Убрать рабочий график', callback_data=f'admin:clear:{employee.id}')],
             [InlineKeyboardButton(text=status_text, callback_data=f'admin:toggle:{employee.id}')],
+            [InlineKeyboardButton(text='Добавить или убрать выходной', callback_data=f'admin:dayoff:{employee.id}')],
             [InlineKeyboardButton(text='Назад к списку', callback_data='admin:home')],
         ]
     )
@@ -506,6 +595,10 @@ def build_late_alert_actions(chat_id, alert_start_time=None):
 
     employees = list(Employee.objects.filter(is_active=True).order_by('full_name'))
     events_by_employee = {}
+    day_off_employee_ids = set(EmployeeDayOff.objects.filter(
+        start_date__lte=selected_date,
+        end_date__gte=selected_date,
+    ).values_list('employee_id', flat=True))
     for event in AttendanceEvent.objects.filter(observed_at__gte=start, observed_at__lt=end).order_by('observed_at'):
         events_by_employee.setdefault(event.employee_id, []).append(event)
 
@@ -517,6 +610,11 @@ def build_late_alert_actions(chat_id, alert_start_time=None):
             alert_date=selected_date,
             chat_id=str(chat_id),
         ).first()
+
+        if employee.id in day_off_employee_ids:
+            if notification and notification.status == LateNotification.STATUS_ACTIVE:
+                actions.append(_resolve_late_notification_action(notification))
+            continue
 
         if first_in:
             if notification and notification.status == LateNotification.STATUS_ACTIVE:
@@ -653,6 +751,10 @@ def build_daily_attendance_message(selected_date):
     end = start + timedelta(days=1)
     employees = list(Employee.objects.filter(is_active=True).order_by('full_name'))
     first_arrivals = {}
+    day_off_employee_ids = set(EmployeeDayOff.objects.filter(
+        start_date__lte=selected_date,
+        end_date__gte=selected_date,
+    ).values_list('employee_id', flat=True))
     for event in AttendanceEvent.objects.filter(
         observed_at__gte=start,
         observed_at__lt=end,
@@ -672,6 +774,13 @@ def build_daily_attendance_message(selected_date):
         return '\n'.join(lines)
 
     for employee in employees:
+        if employee.id in day_off_employee_ids:
+            lines.extend([
+                f'🟣 {_employee_telegram_mention(employee)}',
+                'Статус: <b>Выходной</b>',
+                '',
+            ])
+            continue
         arrival = first_arrivals.get(employee.id)
         arrival_icon = '🟢' if arrival else '⚪'
         lines.extend([
@@ -749,7 +858,7 @@ def build_present_report():
 def build_absent_report():
     selected_date = timezone.localdate()
     rows = _build_rows(selected_date)
-    absent_rows = [row for row in rows if not row.is_present]
+    absent_rows = [row for row in rows if not row.is_present and not row.is_day_off]
 
     lines = [
         '<b>Кого сейчас нет</b>',
@@ -767,7 +876,8 @@ def build_absent_report():
 def build_day_report(selected_date):
     rows = _build_rows(selected_date)
     present_count = sum(1 for row in rows if row.is_present)
-    absent_count = len(rows) - present_count
+    day_off_count = sum(1 for row in rows if row.is_day_off)
+    absent_count = len(rows) - present_count - day_off_count
     check_in_count = sum(row.check_in_count for row in rows)
     check_out_count = sum(row.check_out_count for row in rows)
 
@@ -775,6 +885,7 @@ def build_day_report(selected_date):
     lines = [
         f'<b>Журнал сотрудников за {title_date}</b>',
         f'На работе: <b>{present_count}</b> | Нет: <b>{absent_count}</b>',
+        f'Выходной: <b>{day_off_count}</b>',
         f'Приходов: <b>{check_in_count}</b> | Уходов: <b>{check_out_count}</b>',
         '',
     ]
@@ -810,6 +921,10 @@ def _build_rows(selected_date):
         presence.employee_id: presence
         for presence in Presence.objects.filter(employee__is_active=True).select_related('employee')
     }
+    day_off_employee_ids = set(EmployeeDayOff.objects.filter(
+        start_date__lte=selected_date,
+        end_date__gte=selected_date,
+    ).values_list('employee_id', flat=True))
 
     rows = []
     for employee in employees:
@@ -840,12 +955,18 @@ def _build_rows(selected_date):
                 is_present=is_present,
                 check_in_count=sum(1 for event in events if event.event_type == AttendanceEvent.CHECK_IN),
                 check_out_count=sum(1 for event in events if event.event_type == AttendanceEvent.CHECK_OUT),
+                is_day_off=employee.id in day_off_employee_ids,
             )
         )
     return rows
 
 
 def _employee_line(row):
+    if row.is_day_off:
+        return (
+            f'🟣 👤 <b>{html.escape(row.name)}</b> - {html.escape(row.position)}\n'
+            'Статус: <b>Выходной</b>\n'
+        )
     status_icon = '🟢' if row.is_present else '🔴'
     status = 'На работе' if row.is_present else 'Нет'
     name_icon = _arrival_icon(row)
@@ -900,3 +1021,22 @@ def _format_time(value):
             value = timezone.localtime(value)
         return value.strftime('%H:%M')
     return str(value)
+
+
+def _format_day_off_period(day_off):
+    if day_off.start_date == day_off.end_date:
+        return day_off.start_date.strftime('%d.%m.%Y')
+    return f'{day_off.start_date:%d.%m.%Y}–{day_off.end_date:%d.%m.%Y}'
+
+
+def _resolve_late_notification_action(notification):
+    if notification.message_id:
+        return {
+            'type': 'delete_warning',
+            'notification_id': notification.id,
+            'message_id': notification.message_id,
+        }
+    return {
+        'type': 'resolve_undelivered',
+        'notification_id': notification.id,
+    }

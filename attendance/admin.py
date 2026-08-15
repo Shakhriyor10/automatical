@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AttendanceEvent, DailyAttendanceReport, Device, Employee, LateNotification, Presence, UnknownDevice
+from .models import AttendanceEvent, DailyAttendanceReport, Device, Employee, EmployeeDayOff, LateNotification, Presence, UnknownDevice
 
 
 class DeviceInline(admin.TabularInline):
@@ -14,6 +14,13 @@ class EmployeeAdmin(admin.ModelAdmin):
     list_filter = ('late_alerts_enabled', 'is_active')
     search_fields = ('full_name', 'position', 'phone', 'telegram_user', 'devices__mac_address')
     inlines = (DeviceInline,)
+
+
+@admin.register(EmployeeDayOff)
+class EmployeeDayOffAdmin(admin.ModelAdmin):
+    list_display = ('employee', 'start_date', 'end_date', 'created_at')
+    list_filter = ('start_date', 'end_date')
+    search_fields = ('employee__full_name',)
 
 
 @admin.register(Device)

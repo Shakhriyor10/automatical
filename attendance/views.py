@@ -94,7 +94,7 @@ def _dashboard_context(selected_date):
     unknown_cutoff = now - timedelta(seconds=UNKNOWN_WINDOW_SECONDS)
     unknown_devices = (
         UnknownDevice.objects
-        .filter(ip_address__startswith='192.168.100.', last_seen_at__gte=unknown_cutoff)
+        .filter(ip_address__startswith='192.168.1.', last_seen_at__gte=unknown_cutoff)
         .exclude(mac_address='ff:ff:ff:ff:ff:ff')
         .exclude(mac_address__startswith='01:00:5e:')
         .exclude(mac_address__in=registered_macs)

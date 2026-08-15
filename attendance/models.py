@@ -22,6 +22,36 @@ class Employee(models.Model):
         return self.full_name
 
 
+class EmployeeDayOff(models.Model):
+    employee = models.ForeignKey(
+        Employee,
+        on_delete=models.CASCADE,
+        related_name='days_off',
+        verbose_name='Сотрудник',
+    )
+    start_date = models.DateField('Первый выходной день')
+    end_date = models.DateField('Последний выходной день')
+    created_at = models.DateTimeField('Создано', auto_now_add=True)
+
+    class Meta:
+        ordering = ['start_date', 'employee__full_name']
+        verbose_name = 'Выходной сотрудника'
+        verbose_name_plural = 'Выходные сотрудников'
+
+    def __str__(self):
+        if self.start_date == self.end_date:
+            period = self.start_date.strftime('%d.%m.%Y')
+        else:
+            period = f'{self.start_date:%d.%m.%Y}–{self.end_date:%d.%m.%Y}'
+        return f'{self.employee}: {period}'
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        if self.end_date < self.start_date:
+            raise ValidationError('Последний день не может быть раньше первого.')
+
+
 class Device(models.Model):
     employee = models.ForeignKey(
         Employee,

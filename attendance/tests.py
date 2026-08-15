@@ -1,11 +1,17 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from unittest.mock import patch
 
 from django.test import TestCase
 from django.utils import timezone
 
-from .models import AttendanceEvent, DailyAttendanceReport, Employee, LateNotification
-from .telegram_bot import build_daily_report_action, build_late_alert_actions
+from .models import AttendanceEvent, DailyAttendanceReport, Employee, EmployeeDayOff, LateNotification
+from .telegram_bot import (
+    add_employee_day_off,
+    build_daily_attendance_message,
+    build_daily_report_action,
+    build_late_alert_actions,
+    remove_employee_day_off,
+)
 
 
 class TelegramOfflineRecoveryTests(TestCase):
@@ -157,3 +163,81 @@ class TelegramOfflineRecoveryTests(TestCase):
             actions,
             [{'type': 'delete_warning', 'notification_id': notification.id, 'message_id': 456}],
         )
+
+
+class EmployeeDayOffTests(TestCase):
+    selected_date = date(2026, 8, 17)
+
+    def setUp(self):
+        self.now = timezone.make_aware(datetime(2026, 8, 17, 12, 0))
+        self.employee = Employee.objects.create(
+            full_name='Day Off Employee',
+            work_start_time=time(9, 0),
+            late_grace_minutes=15,
+        )
+
+    def test_day_off_suppresses_late_warning(self):
+        EmployeeDayOff.objects.create(
+            employee=self.employee,
+            start_date=self.selected_date,
+            end_date=self.selected_date,
+        )
+        with (
+            patch('attendance.telegram_bot.timezone.localdate', return_value=self.selected_date),
+            patch('attendance.telegram_bot.timezone.now', return_value=self.now),
+        ):
+            actions = build_late_alert_actions('group')
+
+        self.assertEqual(actions, [])
+        self.assertFalse(LateNotification.objects.exists())
+
+    def test_day_off_resolves_existing_warning(self):
+        notification = LateNotification.objects.create(
+            employee=self.employee,
+            alert_date=self.selected_date,
+            chat_id='group',
+            message_id=321,
+            status=LateNotification.STATUS_ACTIVE,
+        )
+        EmployeeDayOff.objects.create(
+            employee=self.employee,
+            start_date=self.selected_date,
+            end_date=self.selected_date,
+        )
+        with (
+            patch('attendance.telegram_bot.timezone.localdate', return_value=self.selected_date),
+            patch('attendance.telegram_bot.timezone.now', return_value=self.now),
+        ):
+            actions = build_late_alert_actions('group')
+
+        self.assertEqual(actions, [{
+            'type': 'delete_warning',
+            'notification_id': notification.id,
+            'message_id': 321,
+        }])
+
+    def test_daily_message_shows_day_off(self):
+        EmployeeDayOff.objects.create(
+            employee=self.employee,
+            start_date=self.selected_date,
+            end_date=self.selected_date,
+        )
+
+        text = build_daily_attendance_message(self.selected_date)
+
+        self.assertIn('Day Off Employee', text)
+        self.assertIn('Статус: <b>Выходной</b>', text)
+        self.assertNotIn('Статус: <b>Не пришел</b>', text)
+
+    def test_admin_can_add_range_and_remove_it_by_contained_date(self):
+        end_date = self.selected_date + timedelta(days=2)
+
+        add_employee_day_off(self.employee.id, self.selected_date, end_date)
+        self.assertTrue(EmployeeDayOff.objects.filter(
+            employee=self.employee,
+            start_date=self.selected_date,
+            end_date=end_date,
+        ).exists())
+
+        remove_employee_day_off(self.employee.id, self.selected_date + timedelta(days=1))
+        self.assertFalse(EmployeeDayOff.objects.filter(employee=self.employee).exists())
