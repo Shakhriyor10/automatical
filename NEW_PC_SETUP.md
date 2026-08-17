@@ -43,10 +43,21 @@ py -3 -m venv .venv
 
 ```text
 TELEGRAM_BOT_TOKEN=ваш_токен_от_BotFather
+ATTENDANCE_NETWORK=192.168.1.0/24
+ATTENDANCE_GATEWAY_IP=192.168.1.1
 TELEGRAM_LATE_ALERT_CHAT_ID=id_вашей_группы
 TELEGRAM_SCAN_INTERVAL_SECONDS=10
 TELEGRAM_LATE_ALERT_REPEAT_MINUTES=30
 ```
+
+Для другой компании сначала выполните `ipconfig`. Если IPv4-адрес, например, `192.168.0.25`, а шлюз `192.168.0.1`, запишите в `.env`:
+
+```text
+ATTENDANCE_NETWORK=192.168.0.0/24
+ATTENDANCE_GATEWAY_IP=192.168.0.1
+```
+
+После изменения `.env` перезапустите веб-сервер и Telegram-бота.
 
 Если группа не получает сообщения, проверьте `chat_id`.
 У супергрупп Telegram id часто выглядит как `-1001234567890`.

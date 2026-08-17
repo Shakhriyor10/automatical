@@ -1,3 +1,4 @@
+import ipaddress
 from datetime import datetime, time, timedelta
 from threading import Lock
 
@@ -92,14 +93,20 @@ def _dashboard_context(selected_date):
 
     registered_macs = Device.objects.values_list('mac_address', flat=True)
     unknown_cutoff = now - timedelta(seconds=UNKNOWN_WINDOW_SECONDS)
-    unknown_devices = (
+    unknown_device_candidates = (
         UnknownDevice.objects
-        .filter(ip_address__startswith='192.168.1.', last_seen_at__gte=unknown_cutoff)
+        .filter(last_seen_at__gte=unknown_cutoff)
         .exclude(mac_address='ff:ff:ff:ff:ff:ff')
         .exclude(mac_address__startswith='01:00:5e:')
         .exclude(mac_address__in=registered_macs)
         .order_by('-last_seen_at', 'ip_address')
     )
+    attendance_network = ipaddress.ip_network(settings.ATTENDANCE_NETWORK, strict=False)
+    unknown_devices = [
+        device
+        for device in unknown_device_candidates
+        if ipaddress.ip_address(device.ip_address) in attendance_network
+    ]
 
     daily_rows = _build_daily_rows(active_employees, today_events, presences, selected_date, present_cutoff)
 
@@ -112,7 +119,7 @@ def _dashboard_context(selected_date):
         'check_in_count': today_events.filter(event_type=AttendanceEvent.CHECK_IN).count(),
         'check_out_count': today_events.filter(event_type=AttendanceEvent.CHECK_OUT).count(),
         'device_count': Device.objects.count(),
-        'unknown_count': unknown_devices.count(),
+        'unknown_count': len(unknown_devices),
     }
 
 

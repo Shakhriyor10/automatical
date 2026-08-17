@@ -1,10 +1,11 @@
 from datetime import date, datetime, time, timedelta
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from .models import AttendanceEvent, DailyAttendanceReport, Employee, EmployeeDayOff, LateNotification
+from .models import AttendanceEvent, DailyAttendanceReport, Employee, EmployeeDayOff, LateNotification, UnknownDevice
+from .views import _dashboard_context
 from .telegram_bot import (
     add_employee_day_off,
     build_daily_attendance_message,
@@ -241,3 +242,21 @@ class EmployeeDayOffTests(TestCase):
 
         remove_employee_day_off(self.employee.id, self.selected_date + timedelta(days=1))
         self.assertFalse(EmployeeDayOff.objects.filter(employee=self.employee).exists())
+
+
+class ConfigurableNetworkTests(TestCase):
+    @override_settings(ATTENDANCE_NETWORK='10.20.30.0/24')
+    def test_dashboard_uses_network_from_settings(self):
+        expected = UnknownDevice.objects.create(
+            ip_address='10.20.30.15',
+            mac_address='02:11:22:33:44:55',
+        )
+        UnknownDevice.objects.create(
+            ip_address='192.168.1.15',
+            mac_address='02:aa:bb:cc:dd:ee',
+        )
+
+        context = _dashboard_context(timezone.localdate())
+
+        self.assertEqual([device.id for device in context['unknown_devices']], [expected.id])
+        self.assertEqual(context['unknown_count'], 1)
